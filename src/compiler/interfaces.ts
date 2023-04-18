@@ -186,6 +186,8 @@ export interface CompileOptions {
 
 	preserveComments?: boolean;
 	preserveWhitespace?: boolean;
+
+	__renderer?: any;
 }
 
 export interface ParserOptions {

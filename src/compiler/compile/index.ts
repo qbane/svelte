@@ -46,7 +46,7 @@ const valid_css_values = [
 const regex_valid_identifier = /^[a-zA-Z_$][a-zA-Z_$0-9]*$/;
 const regex_starts_with_lowercase_character = /^[a-z]/;
 
-function validate_options(options: CompileOptions, warnings: Warning[]) {
+export function validate_options(options: CompileOptions, warnings: Warning[]) {
 	const { name, filename, loopGuardTimeout, dev, namespace, css } = options;
 
 	Object.keys(options).forEach(key => {

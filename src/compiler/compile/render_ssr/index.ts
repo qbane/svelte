@@ -1,7 +1,7 @@
 import { b } from 'code-red';
 import Component from '../Component';
 import { CompileOptions, CssResult } from '../../interfaces';
-import { string_literal } from '../utils/stringify';
+// import { string_literal } from '../utils/stringify';
 import Renderer from './Renderer';
 import { INode as TemplateNode } from '../nodes/interfaces'; // TODO
 import Text from '../nodes/Text';
@@ -12,11 +12,16 @@ import { walk } from 'estree-walker';
 import { invalidate } from '../render_dom/invalidate';
 import check_enable_sourcemap from '../utils/check_enable_sourcemap';
 
+interface SSRResult {
+	js: Node[];
+	css: CssResult;
+};
+
 export default function ssr(
 	component: Component,
 	options: CompileOptions
-): {js: Node[]; css: CssResult} {
-	const renderer = new Renderer({
+): SSRResult {
+	const renderer = new (options.__renderer || Renderer)({
 		name: component.name
 	});
 
@@ -203,23 +208,10 @@ export default function ssr(
 
 	const css_sourcemap_enabled = check_enable_sourcemap(options.enableSourcemap, 'css');
 
-	const js = b`
-		${css.code ? b`
-		const #css = {
-			code: "${css.code}",
-			map: ${css_sourcemap_enabled && css.map ? string_literal(css.map.toString()) : 'null'}
-		};` : null}
+	const ext = component.extract_javascript(component.ast.module)
+	const fh = component.fully_hoisted
 
-		${component.extract_javascript(component.ast.module)}
-
-		${component.fully_hoisted}
-
-		const ${name} = @create_ssr_component(($$result, $$props, $$bindings, #slots) => {
-			${blocks}
-		});
-	`;
-
-	return {js, css};
+	return {js: b``, css, name, blocks, css_sourcemap_enabled, ext, fh} as SSRResult;
 }
 
 function trim(nodes: TemplateNode[]) {
