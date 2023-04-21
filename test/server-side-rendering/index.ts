@@ -162,7 +162,7 @@ describe('ssr', () => {
 
 			if (config.skip_if_ssr) return;
 
-			(config.skip ? it.skip : solo ? it.only : it)(dir, () => {
+			(config.skip ? it.skip : solo ? it.only : it)(`ssr-${suite}-${dir}`, () => {
 				const cwd = path.resolve(`test/${suite}/samples`, dir);
 
 				cleanRequireCache();
