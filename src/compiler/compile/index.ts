@@ -2,6 +2,7 @@ import Stats from '../Stats';
 import parse from '../parse/index';
 import render_dom from './render_dom/index';
 import render_ssr from './render_ssr/index';
+import { generate_from_ssr_metadata } from './render_ssr/codegen';
 import { CompileOptions, Warning } from '../interfaces';
 import Component from './Component';
 import fuzzymatch from '../utils/fuzzymatch';
@@ -136,7 +137,7 @@ export default function compile(source: string, options: CompileOptions = {}) {
 	const result = options.generate === false
 		? null
 		: options.generate === 'ssr'
-			? render_ssr(component, options)
+			? generate_from_ssr_metadata(render_ssr(component, options))
 			: render_dom(component, options);
 
 	return component.generate(result);

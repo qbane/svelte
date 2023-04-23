@@ -1,7 +1,6 @@
-import { b } from 'code-red';
+import { b, Expression } from 'code-red';
 import Component from '../Component';
 import { CompileOptions, CssResult } from '../../interfaces';
-// import { string_literal } from '../utils/stringify';
 import Renderer from './Renderer';
 import { INode as TemplateNode } from '../nodes/interfaces'; // TODO
 import Text from '../nodes/Text';
@@ -12,15 +11,37 @@ import { walk } from 'estree-walker';
 import { invalidate } from '../render_dom/invalidate';
 import check_enable_sourcemap from '../utils/check_enable_sourcemap';
 
-interface SSRResult {
-	js: Node[];
-	css: CssResult;
-};
+export interface SSROutput {
+	svelte_version: string
+	component_name: string
+	dev: boolean
+
+	// blocks
+	injected_reactive_declaration_vars: string[]
+	rest_export_names: string[]
+	uses_slots: boolean,
+	reactive_store_declarations: Array<{ name: string; reassigned: boolean }>
+	reactive_store_subscriptions: string[]
+	instance_javascript: Node[]
+	parent_bindings: Array<{ name: string; export_name: string }>
+	main: {
+		has_bindings: boolean
+		reactive_declarations: Node[][]
+		reactive_store_unsubscriptions: string[]
+	}
+
+	// js codegen
+	css_sourcemap_enabled: boolean
+	css: CssResult
+	module_javascript: Node[]
+	fully_hoisted_statements: Array<(Node | Node[])>
+	literal: Expression
+}
 
 export default function ssr(
 	component: Component,
 	options: CompileOptions
-): SSRResult {
+): SSROutput {
 	const renderer = new (options.__renderer || Renderer)({
 		name: component.name
 	});
@@ -42,10 +63,9 @@ export default function ssr(
 
 	const uses_rest = component.var_lookup.has('$$restProps');
 	const props = component.vars.filter(variable => !variable.module && variable.export_name);
-	const rest = uses_rest ? b`let $$restProps = @compute_rest_props($$props, [${props.map(prop => `"${prop.export_name}"`).join(',')}]);` : null;
+	const rest_export_names = uses_rest ? props.map(prop => prop.export_name) : [];
 
 	const uses_slots = component.var_lookup.has('$$slots');
-	const slots = uses_slots ? b`let $$slots = @compute_slots(#slots);` : null;
 
 	const reactive_stores = component.vars.filter(variable => variable.name[0] === '$' && variable.name[1] !== '$');
 	const reactive_store_subscriptions = reactive_stores
@@ -53,29 +73,17 @@ export default function ssr(
 			const variable = component.var_lookup.get(store.name.slice(1));
 			return !variable || variable.hoistable;
 		})
-		.map(({ name }) => {
-			const store_name = name.slice(1);
-			return b`
-				${component.compile_options.dev && b`@validate_store(${store_name}, '${store_name}');`}
-				${`$$unsubscribe_${store_name}`} = @subscribe(${store_name}, #value => ${name} = #value)
-			`;
-		});
+		.map(({ name }) => name);
 	const reactive_store_unsubscriptions = reactive_stores.map(
-		({ name }) => b`${`$$unsubscribe_${name.slice(1)}`}()`
+		({ name }) => name.slice(1)
 	);
 
 	const reactive_store_declarations = reactive_stores
 		.map(({ name }) => {
 			const store_name = name.slice(1);
 			const store = component.var_lookup.get(store_name);
-
-			if (store && store.reassigned) {
-				const unsubscribe = `$$unsubscribe_${store_name}`;
-				const subscribe = `$$subscribe_${store_name}`;
-
-				return b`let ${name}, ${unsubscribe} = @noop, ${subscribe} = () => (${unsubscribe}(), ${unsubscribe} = @subscribe(${store_name}, $$value => ${name} = $$value), ${store_name})`;
-			}
-			return b`let ${name}, ${`$$unsubscribe_${store_name}`};`;
+			const reassigned = store && store.reassigned;
+			return { name, reassigned };
 		});
 
 	// instrument get/set store value
@@ -148,12 +156,10 @@ export default function ssr(
 	const parent_bindings = instance_javascript
 		? component.vars
 			.filter(variable => !variable.module && variable.export_name)
-			.map(prop => {
-				return b`if ($$props.${prop.export_name} === void 0 && $$bindings.${prop.export_name} && ${prop.name} !== void 0) $$bindings.${prop.export_name}(${prop.name});`;
-			})
+			.map(({name, export_name}) => ({name, export_name}))
 		: [];
 
-	const injected = Array.from(component.injected_reactive_declaration_vars).filter(name => {
+	const injected_reactive_declaration_vars = Array.from(component.injected_reactive_declaration_vars).filter(name => {
 		const variable = component.var_lookup.get(name);
 		return variable.injected;
 	});
@@ -170,48 +176,35 @@ export default function ssr(
 		return statement;
 	});
 
-	const main = renderer.has_bindings
-		? b`
-			let $$settled;
-			let $$rendered;
-
-			do {
-				$$settled = true;
-
-				${reactive_declarations}
-
-				$$rendered = ${literal};
-			} while (!$$settled);
-
-			${reactive_store_unsubscriptions}
-
-			return $$rendered;
-		`
-		: b`
-			${reactive_declarations}
-
-			${reactive_store_unsubscriptions}
-
-			return ${literal};`;
-
-	const blocks = [
-		...injected.map(name => b`let ${name};`),
-		rest,
-		slots,
-		...reactive_store_declarations,
-		...reactive_store_subscriptions,
-		instance_javascript,
-		...parent_bindings,
-		css.code && b`$$result.css.add(#css);`,
-		main
-	].filter(Boolean);
 
 	const css_sourcemap_enabled = check_enable_sourcemap(options.enableSourcemap, 'css');
+	const module_javascript = component.extract_javascript(component.ast.module);
+	const fully_hoisted_statements = component.fully_hoisted;
 
-	const ext = component.extract_javascript(component.ast.module)
-	const fh = component.fully_hoisted
+	return {
+		svelte_version: '__VERSION__',
+		component_name: name.name,
+		dev: component.compile_options.dev,
 
-	return {js: b``, css, name, blocks, css_sourcemap_enabled, ext, fh} as SSRResult;
+		injected_reactive_declaration_vars,
+		rest_export_names,
+		uses_slots,
+		reactive_store_declarations,
+		reactive_store_subscriptions,
+		instance_javascript,
+		parent_bindings,
+		main: {
+			has_bindings: renderer.has_bindings,
+			reactive_declarations,
+			reactive_store_unsubscriptions
+		},
+
+		css_sourcemap_enabled,
+		css,
+		module_javascript,
+		fully_hoisted_statements,
+		literal
+	};
 }
 
 function trim(nodes: TemplateNode[]) {
